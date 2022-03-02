@@ -1,5 +1,8 @@
-from django.shortcuts import render
+from django.utils.decorators import method_decorator
+from django.views.decorators.cache import cache_page
 from rest_framework import generics,permissions
+from django.views.decorators.vary import vary_on_cookie, vary_on_headers
+
 from .models import *
 from .serializers import *
 from .pagination import *
@@ -15,13 +18,12 @@ class PostListView(generics.ListAPIView):
 
     def get_queryset(self):
         query = self.request.query_params
+        posts = Post.objects.order_by('-created_at')
 
         #TODO: add postgre sql database to _icontains to work
         if 'search' in query:
-            posts = Post.objects.order_by('-created_at').filter(title=query['search'])
+            posts = posts.filter(title=query['search'])
             return posts
-
-        posts = Post.objects.order_by('-created_at')
         
         if 'author' in query:
             posts = posts.filter(author=query['author'])
@@ -35,21 +37,35 @@ class PostDetailView(generics.RetrieveUpdateAPIView):
     permission_class = (permissions.IsAuthenticated,isAuthorOrReadOnly,)
     serializer_class = PostDetailSerializer
 
+    # With auth: cache requested url for each user for 2 hours
+    @method_decorator(cache_page(60*60*2))
+    @method_decorator(vary_on_headers("Authorization",))
+    def get_queryset(self):
+        return Post.objects.all()
+
 
 # Comment Views
 # the comment can only be created at /comments/
 class CommentView(generics.ListCreateAPIView):
-    queryset=Comment.objects.all()
     permission_class = (permissions.IsAuthenticated,)
     serializer_class = CommentSerializer
 
-# only authenticated user and the who has written the comment can delete or update the comment at /comments/:id
+    # With auth: cache requested url for each user for 2 hours
+    @method_decorator(cache_page(60*60*2))
+    @method_decorator(vary_on_headers("Authorization",))
+    def get_queryset(self):
+        query = self.request.query_params
+        comments = Comment.objects.order_by('-created_at').filter(post=query['postId'])
+        return comments
+
+
+# only authenticated user and the who has written the comment can delete or update the comment at /comments/:postId
 class CommentDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset=Comment.objects.all()
     permission_class = (permissions.IsAuthenticated,isCommentorOrReadOnly)
     serializer_class = CommentSerializer
 
-
+    
 # Tags Views
 # it's a list view so that is cannot be updated by user in any case at /tags/
 class TagsView(generics.ListAPIView):
